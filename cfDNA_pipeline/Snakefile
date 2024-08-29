@@ -1,0 +1,123 @@
+############################################################################
+########################### -*- coding:utf-8 -*-############################
+######################## -*- Author: Zetong Wu -*- #########################
+#################### -*- E-mail: 2047435086@qq.com -*- #####################
+######################### -*- Date: 20240829 -*- ###########################
+############################################################################
+
+samples = [file_name.rstrip('.fastq') for file_name in os.listdir("raw")]
+
+import os
+import pandas as pd
+
+######################################################################################################
+
+def outfile():
+    files = []
+
+    ###################################################################################################
+    files.append(expand("result/porechop/{sample}.fastq",sample=samples))
+    files.append(expand("result/nanofilt/{sample}.fastq",sample=samples))
+    files.append(expand("result/length_statistic/{sample}.txt",sample=samples))
+    files.append(expand("result/length_statistic/{sample}_reads_distribution.pdf",sample=samples))
+    files.append(expand("result/nanoplot_raw/{sample}",sample=samples))
+    files.append(expand("result/nanoplot_clean/{sample}",sample=samples))
+    files.append(expand("result/minimap2/{sample}.bam",sample=samples))
+    files.append(expand("result/minimap2/{sample}.bam.bai",sample=samples))
+    files.append(expand("result/bwa/{sample}.bam",sample=samples))
+    files.append(expand("result/bwa/{sample}.bam.bai",sample=samples))
+
+    ###################################################################################################
+    return files
+
+######################################################################################################
+rule all:
+    input:
+        outfile()
+#rule
+######################################################################################################
+rule porechop:
+    input:
+        "raw/{sample}.fastq"
+    output:
+        "result/porechop/{sample}.fastq"
+    shell:
+        "/home/dell/anaconda3/bin/porechop -i {input} -t 20 -o {output}"
+
+rule nanofilt:
+    input:
+        "result/porechop/{sample}.fastq"
+    output:
+        "result/nanofilt/{sample}.fastq"
+    shell:
+        "/home/dell/anaconda3/bin/NanoFilt -q 7 -l 1 {input} > {output}"
+
+rule read_length:
+    input:
+        "result/nanofilt/{sample}.fastq"
+    output:
+        "result/length_statistic/{sample}.txt"
+    shell:
+        "/home/dell/anaconda3/bin/seqkit fx2tab -j 30 -l  -n -i -H {input} |cut -f 2 > {output}"
+
+rule reads_distribution:
+    input:
+        length="result/length_statistic/{sample}.txt"
+    output:
+        distribution="result/length_statistic/{sample}_reads_distribution.pdf"
+    script:
+        "scripts/reads_distribution.R"
+
+rule nanoplot:
+    input:
+        raw_reads="result/porechop/{sample}.fastq",
+        clean_reads="result/nanofilt/{sample}.fastq"
+    output:
+        nanoplot_raw=directory("result/nanoplot_raw/{sample}"),
+        nanoplot_clean=directory("result/nanoplot_clean/{sample}")
+    shell:
+        """
+        /home/dell/anaconda3/bin/NanoPlot -t 20 --fastq {input.raw_reads} --plots hex dot --N50 -o {output.nanoplot_raw}
+        /home/dell/anaconda3/bin/NanoPlot -t 20 --fastq {input.clean_reads} --plots hex dot --N50 -o {output.nanoplot_clean}
+        """
+
+rule minimap2:
+    input:
+        genome_index="/home/dell/genome/GRCh38_p14/GRCh38.p14.genome.fa.index",
+        cleandata="result/nanofilt/{sample}.fastq"
+    output:
+        "result/minimap2/{sample}.bam"
+    shell:
+        "/home/dell/anaconda3/bin/minimap2 -ax map-ont {input.genome_index} {input.cleandata} -t 20| /home/dell/anaconda3/bin/samtools sort -@ 20 -O BAM -o {output}"
+
+rule bam_index_minimap2:
+    input:
+        bam="result/minimap2/{sample}.bam"
+    output:
+        index="result/minimap2/{sample}.bam.bai"
+    threads: 2
+    shell:
+        """
+        samtools index -@ {threads} {input.bam}
+        """
+
+rule bwa_mapping:
+    input:
+        genome_index="/home/dell/genome/GRCh38_p14/GRCh38.p14.genome.fa",
+        cleandata="result/nanofilt/{sample}.fastq"
+    output:
+        "result/bwa/{sample}.bam"
+    shell:
+        "/usr/bin/bwa mem -t 20 -x ont2d {input.genome_index} {input.cleandata} | /home/dell/anaconda3/bin/samtools sort -@ 20 -O BAM -o {output}"
+
+rule bam_index_bwa:
+    input:
+        bam="result/bwa/{sample}.bam"
+    output:
+        index="result/bwa/{sample}.bam.bai"
+    threads: 2
+    shell:
+        """
+        samtools index -@ {threads} {input.bam}
+        """
+
